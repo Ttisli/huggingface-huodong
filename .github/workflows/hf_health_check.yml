@@ -1,0 +1,41 @@
+name: HF HertzBeat 定时存活探测
+on:
+  # 每30分钟执行一次，UTC时区，防HF 429限流
+  schedule:
+    - cron: '*/30 * * * *'
+  # 支持手动点击运行测试
+  workflow_dispatch:
+
+jobs:
+  check_hf_site:
+    runs-on: ubuntu-latest
+    steps:
+      - name: 安装Python requests库
+        run: python3 -m pip install requests
+      - name: 执行网页存活探测
+        run: |
+          python3 << 'PY_CODE'
+          import requests
+          url = "https://tris3131-hertzbeat.hf.space/"
+          headers = {
+              "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/126.0.0.0 Safari/537.36"
+          }
+          timeout = 8
+          try:
+              res = requests.get(url, headers=headers, timeout=timeout)
+              print(f"HTTP状态码: {res.status_code}")
+              if 200 <= res.status_code < 300:
+                  print("✅ 页面正常在线")
+              else:
+                  print(f"❌ 页面异常，状态码 {res.status_code}")
+                  exit(1)
+          except requests.exceptions.Timeout:
+              print("❌ 请求超时，服务无法访问")
+              exit(1)
+          except requests.exceptions.ConnectionError:
+              print("❌ 连接失败，服务宕机")
+              exit(1)
+          except Exception as e:
+              print(f"❌ 探测异常：{str(e)}")
+              exit(1)
+          PY_CODE
