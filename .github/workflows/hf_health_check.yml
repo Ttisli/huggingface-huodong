@@ -1,9 +1,7 @@
 name: HF HertzBeat 定时存活探测
 on:
-  # 每8小时执行一次 UTC 时区
   schedule:
     - cron: '0 */8 * * *'
-  # 支持手动点击运行测试
   workflow_dispatch:
 
 jobs:
@@ -12,48 +10,120 @@ jobs:
     steps:
       - name: 安装Python requests库
         run: python3 -m pip install requests
-      - name: 批量多网址存活探测
+      - name: 增强多站点综合探测
         run: |
           python3 << 'PY_CODE'
           import requests
+          import time
+          from datetime import datetime
 
-          # 在这里添加/修改需要探测的网址
-          urls = [
+          # ==================== 配置区 ====================
+          # 待探测站点列表
+          raw_urls = [
               "https://tris3131-hertzbeat.hf.space/",
-              "https://tris3131-shay-n8n.hf.space//"
+              "https://tris3131-shay-n8n.hf.space/"
           ]
-
+          # 请求基础头
           headers = {
-              "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/126.0.0.0 Safari/537.36"
+              "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/126.0.0.0 Safari/537.36",
+              "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8"
           }
-          timeout = 8
-          all_normal = True
+          # 全局参数
+          timeout = 10
+          retry_times = 2      # 失败重试次数
+          retry_delay = 2      # 重试间隔(秒)
+          # ================================================
 
-          for idx, url in enumerate(urls, 1):
-              print(f"\n===== 【{idx}】探测地址：{url} =====")
-              try:
-                  res = requests.get(url, headers=headers, timeout=timeout)
-                  print(f"HTTP状态码: {res.status_code}")
-                  if 200 <= res.status_code < 300:
-                      print("✅ 页面正常在线")
-                  else:
-                      print(f"❌ 页面异常，状态码 {res.status_code}")
-                      all_normal = False
-              except requests.exceptions.Timeout:
-                  print("❌ 请求超时，服务无法访问")
-                  all_normal = False
-              except requests.exceptions.ConnectionError:
-                  print("❌ 连接失败，服务宕机")
-                  all_normal = False
-              except Exception as e:
-                  print(f"❌ 探测异常：{str(e)}")
-                  all_normal = False
+          # 预处理URL：清理末尾多余斜杠
+          urls = []
+          for u in raw_urls:
+              clean_url = u.rstrip("/") + "/"
+              urls.append(clean_url)
 
-          # 全部检测完成后判断，任意站点异常则任务退出失败
-          print("\n==================== 探测汇总 ====================")
-          if all_normal:
-              print("🎉 所有站点全部在线正常")
+          # 统计容器
+          success_count = 0
+          fail_count = 0
+          fail_list = []
+
+          def get_now():
+              return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+          def classify_status(code):
+              if 200 <= code < 300:
+                  return "✅ 正常(2xx成功)"
+              elif 300 <= code < 400:
+                  return "⚠️ 重定向(3xx)"
+              elif 400 <= code < 500:
+                  return "❌ 客户端错误(4xx)"
+              else:
+                  return "❌ 服务端错误(5xx)"
+
+          print(f"[{get_now()}] 探测任务开始，共 {len(urls)} 个站点\n")
+
+          for seq, url in enumerate(urls, 1):
+              print(f"===== [{seq}] 目标地址：{url} | 探测时间：{get_now()} =====")
+              hit_error = False
+              last_err_msg = ""
+              spend_time = 0
+
+              # 重试循环
+              for attempt in range(1, retry_times + 1):
+                  try:
+                      start = time.time()
+                      res = requests.get(url, headers=headers, timeout=timeout)
+                      spend_time = round((time.time() - start) * 1000, 2)
+                      status_text = classify_status(res.status_code)
+                      content_len = len(res.content)
+
+                      print(f"第{attempt}次请求 | 响应耗时：{spend_time} ms")
+                      print(f"HTTP状态码：{res.status_code} | {status_text}")
+                      print(f"响应内容长度：{content_len} bytes")
+
+                      # 非2xx判定为异常
+                      if not (200 <= res.status_code < 300):
+                          hit_error = True
+                          last_err_msg = f"状态码异常 {res.status_code}"
+                          # 打印页面前200字符辅助排查
+                          preview = res.text[:200].replace("\n", " ")
+                          print(f"响应片段预览：{preview}...")
+                      break
+
+                  except requests.exceptions.Timeout:
+                      last_err_msg = "请求超时"
+                      hit_error = True
+                  except requests.exceptions.ConnectionError:
+                      last_err_msg = "网络连接失败/服务宕机"
+                      hit_error = True
+                  except Exception as e:
+                      last_err_msg = f"未知异常：{str(e)}"
+                      hit_error = True
+
+                  # 未到最后一次则等待重试
+                  if attempt < retry_times:
+                      print(f"第{attempt}次失败：{last_err_msg}，{retry_delay}秒后重试...\n")
+                      time.sleep(retry_delay)
+
+              # 单次站点探测结果汇总
+              if hit_error:
+                  print(f"【站点最终结果】探测失败：{last_err_msg}\n")
+                  fail_count += 1
+                  fail_list.append((seq, url, last_err_msg))
+              else:
+                  print(f"【站点最终结果】探测正常\n")
+                  success_count += 1
+
+          # 全局汇总报告
+          print("="*60)
+          print(f"[{get_now()}] 全部站点探测完成 汇总报告")
+          print(f"总站点数：{len(urls)} | 正常：{success_count} | 异常：{fail_count}")
+          print("="*60)
+
+          if fail_count == 0:
+              print("🎉 所有站点访问全部正常，任务通过")
           else:
-              print("⚠️ 存在站点访问异常，任务标记失败")
+              print(f"⚠️ 共 {fail_count} 个站点探测异常，明细如下：")
+              for idx, link, err in fail_list:
+                  print(f"  [{idx}] {link} → {err}")
+              # 存在异常则让Workflow失败标红
               exit(1)
           PY_CODE
