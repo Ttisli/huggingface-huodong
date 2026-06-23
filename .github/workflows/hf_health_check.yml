@@ -1,8 +1,8 @@
 name: HF HertzBeat 定时存活探测
 on:
-  # 每30分钟执行一次，UTC时区，防HF 429限流
+  # 每8小时执行一次 UTC 时区
   schedule:
-    - cron: '0 */2 * * *'
+    - cron: '0 */8 * * *'
   # 支持手动点击运行测试
   workflow_dispatch:
 
@@ -12,30 +12,48 @@ jobs:
     steps:
       - name: 安装Python requests库
         run: python3 -m pip install requests
-      - name: 执行网页存活探测
+      - name: 批量多网址存活探测
         run: |
           python3 << 'PY_CODE'
           import requests
-          url = "https://tris3131-hertzbeat.hf.space/"
+
+          # 在这里添加/修改需要探测的网址
+          urls = [
+              "https://tris3131-hertzbeat.hf.space/",
+              "https://tris3131-shay-n8n.hf.space//"
+          ]
+
           headers = {
               "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/126.0.0.0 Safari/537.36"
           }
           timeout = 8
-          try:
-              res = requests.get(url, headers=headers, timeout=timeout)
-              print(f"HTTP状态码: {res.status_code}")
-              if 200 <= res.status_code < 300:
-                  print("✅ 页面正常在线")
-              else:
-                  print(f"❌ 页面异常，状态码 {res.status_code}")
-                  exit(1)
-          except requests.exceptions.Timeout:
-              print("❌ 请求超时，服务无法访问")
-              exit(1)
-          except requests.exceptions.ConnectionError:
-              print("❌ 连接失败，服务宕机")
-              exit(1)
-          except Exception as e:
-              print(f"❌ 探测异常：{str(e)}")
+          all_normal = True
+
+          for idx, url in enumerate(urls, 1):
+              print(f"\n===== 【{idx}】探测地址：{url} =====")
+              try:
+                  res = requests.get(url, headers=headers, timeout=timeout)
+                  print(f"HTTP状态码: {res.status_code}")
+                  if 200 <= res.status_code < 300:
+                      print("✅ 页面正常在线")
+                  else:
+                      print(f"❌ 页面异常，状态码 {res.status_code}")
+                      all_normal = False
+              except requests.exceptions.Timeout:
+                  print("❌ 请求超时，服务无法访问")
+                  all_normal = False
+              except requests.exceptions.ConnectionError:
+                  print("❌ 连接失败，服务宕机")
+                  all_normal = False
+              except Exception as e:
+                  print(f"❌ 探测异常：{str(e)}")
+                  all_normal = False
+
+          # 全部检测完成后判断，任意站点异常则任务退出失败
+          print("\n==================== 探测汇总 ====================")
+          if all_normal:
+              print("🎉 所有站点全部在线正常")
+          else:
+              print("⚠️ 存在站点访问异常，任务标记失败")
               exit(1)
           PY_CODE
